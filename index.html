@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hangout Plaza</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #bfe3fb; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1d2433; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  #tags { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  .tag { position: absolute; left: 0; top: 0; transform-origin: 50% 100%; display: flex; flex-direction: column; align-items: center; will-change: transform; }
+  .tag .name { pointer-events: auto; cursor: pointer; font: 700 13px system-ui, sans-serif; color: #fff; text-shadow: 0 1px 3px #000a; padding: 2px 6px; white-space: nowrap; }
+  .tag .bubble { max-width: 190px; padding: 6px 10px; margin-bottom: 4px; border-radius: 14px; background: #fff; color: #1d2433; font: 600 14px/1.3 system-ui, sans-serif; box-shadow: 0 3px 8px #0003; text-align: center; overflow-wrap: anywhere; position: relative; }
+  .tag .bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -6px; border: 6px solid transparent; border-bottom: 0; border-top-color: #fff; }
+  .tag .bubble:empty { display: none; }
+  .hud { position: fixed; pointer-events: none; }
+  #log { top: calc(max(10px, env(safe-area-inset-top)) + 20px); left: 12px; width: min(330px, 70vw); font-size: 13px; color: #fff; text-shadow: 0 1px 3px #000c; }
+  #log div { margin-top: 2px; } #log b { font-weight: 800; }
+  #net { top: max(10px, env(safe-area-inset-top)); left: 12px; font-size: 12px; font-weight: 600; color: #fff; text-shadow: 0 1px 3px #000c; opacity: .9; }
+  #hint { left: 0; right: 0; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 62px); text-align: center; font-size: 14px; font-weight: 700; color: #fff; text-shadow: 0 1px 4px #000c; padding: 0 12px; }
+  #bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: max(12px, env(safe-area-inset-bottom)); display: flex; gap: 8px; width: min(560px, calc(100vw - 24px)); }
+  #bar button, .card button { min-width: 48px; min-height: 48px; border: 0; border-radius: 14px; background: #ffffffe6; color: #1d2433; font: 700 18px system-ui, sans-serif; box-shadow: 0 2px 6px #0003; cursor: pointer; touch-action: manipulation; }
+  #say { flex: 1; min-width: 0; height: 48px; border: 0; border-radius: 14px; padding: 0 14px; font: 500 16px system-ui, sans-serif; background: #ffffffe6; box-shadow: 0 2px 6px #0003; outline: none; }
+  #wheel { position: fixed; inset: 0; display: grid; place-items: center; background: #0003; }
+  #wheel div { position: relative; width: 240px; height: 240px; border-radius: 50%; background: #ffffffcc; box-shadow: 0 6px 20px #0004; }
+  #wheel button { position: absolute; width: 84px; height: 84px; margin: -42px; border: 0; border-radius: 50%; background: #fff; font: 700 13px system-ui, sans-serif; color: #1d2433; box-shadow: 0 2px 6px #0003; cursor: pointer; }
+  #wheel button span { display: block; font-size: 30px; line-height: 1.1; }
+  .panel { position: fixed; inset: 0; display: grid; place-items: center; background: #0004; }
+  .card { width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; box-sizing: border-box; padding: 18px; border-radius: 18px; background: #fff; box-shadow: 0 10px 30px #0004; }
+  .card h2 { margin: 0 0 10px; font-size: 21px; }
+  .card label { display: block; margin: 12px 0 6px; font-size: 13px; font-weight: 700; color: #5a6478; }
+  .card input { width: 100%; box-sizing: border-box; height: 44px; border: 2px solid #dde3ee; border-radius: 12px; padding: 0 12px; font: 600 16px system-ui, sans-serif; }
+  .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .opts button { min-width: 44px; min-height: 44px; box-shadow: none; border: 3px solid #e5e9f2 !important; background: #f6f8fc; font-size: 22px; padding: 0 6px; }
+  .opts button.on { border-color: #1d2433 !important; }
+  .card .go { width: 100%; margin-top: 16px; background: #ff7a59; color: #fff; font-size: 17px; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #eef1f6; font-weight: 600; }
+  .row i { width: 16px; height: 16px; border-radius: 50%; flex: none; } .row em { font-style: normal; font-size: 12px; color: #8a93a6; }
+  .row button { margin-left: auto; min-height: 40px; font-size: 14px; padding: 0 12px; box-shadow: none; background: #eef1f6; }
+  [hidden] { display: none !important; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div id="tags"></div>
+<div class="hud" id="log"></div>
+<div class="hud" id="net">Connecting…</div>
+<div class="hud" id="hint"></div>
+<div id="bar">
+  <button id="emoteBtn" title="Emotes (E)">😀</button>
+  <input id="say" maxlength="80" placeholder="Say something…" enterkeyhint="send" autocomplete="off">
+  <button id="peopleBtn" title="People">👥</button>
+  <button id="lookBtn" title="Change your look">👕</button>
+</div>
+<div id="wheel" hidden><div></div></div>
+<div class="panel" id="lookPanel" hidden><div class="card">
+  <h2>How do you look?</h2>
+  <label for="nameIn">Name</label><input id="nameIn" maxlength="16" autocomplete="off">
+  <label>Color</label><div class="opts" id="colorOpts"></div>
+  <label>Hat</label><div class="opts" id="hatOpts"></div>
+  <button class="go" id="lookGo">Enter the plaza</button>
+</div></div>
+<div class="panel" id="peoplePanel" hidden><div class="card">
+  <h2>People here</h2><div id="peopleList"></div>
+  <button class="go" id="peopleClose">Close</button>
+</div></div>
+<script type="module">
+/* ═══ HANGOUT PLAZA · a Multiplayer Agent starter ═══════════════════════════════════════
+ * Walk around, chat and emote. Drop-in, 2–30 players; friendly bots fill the plaza.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ speeds, chat timing, the bots' lines, hats and colors
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   PLAZA ......... ground, fountain, benches, trees, lamps; what you bump into; bench seats
+ *   AVATARS ....... the avatar model, hats, emote animations, name tags and chat bubbles
+ *   BOTS (HOST) ... wandering, sitting, emoting, greeting and chatting. Only the host runs them.
+ *   ME ............ walking, emotes, chat, your look. Each player writes only its own.
+ *   CHAT & PEOPLE . the chat log, bubbles, the people list and mute
+ *   INPUT ......... keyboard, tap to walk, drag to look around, the emote wheel
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `a` (one packed JSON field: position, facing,
+ *     emote, walking) about 10 times a second while moving, `look` (name, color, hat),
+ *     `say` (your last chat line, so people who join later still see it), and `hb`
+ *     (heartbeat) once a second.
+ *   - A chat line is also an event, "chat" {t, k}, so everyone gets it at once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared field `bots` (every bot's
+ *     position, look, emote and last line). A new host adopts the bots from state.
+ *   - Mute is your own choice and stays on your screen: it hides that player's bubbles
+ *     and lines for you only.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  seats: 8,               // bots fill the plaza up to this many avatars
+  speed: 4.5,             // walking speed, units/s
+  plaza: 20,              // radius of the stone plaza
+  edge: 31,               // how far out you can walk
+  bubbleMs: 7000,         // ms a chat bubble stays up
+  chatGapMs: 900,         // ms between two of your lines
+  botTalk: [8000, 18000], // ms between one bot's lines
+  waveMs: 2600, jumpMs: 900, // one-shot emotes; dance and sit last until you move
+  camDist: 9, camHeight: 4.2,
+  botLines: ["Hi everyone! 👋", "This fountain is so pretty", "Nice hat!", "Anyone want to dance? 💃", "What a lovely day ☀️",
+    "I love this plaza", "Hello hello!", "Race you to the trees!", "Sit with me on the bench?", "Let's all jump!",
+    "Try the dance emote 😄", "I could stay here all day", "Good vibes only ✨", "Welcome to the plaza!", "The fountain sounds so calm"],
+  greet: ["Hi {name}! 👋", "Welcome, {name}!", "Hey {name}, nice look!", "Oh hi {name} 😄"],
+};
+const BOT_NAMES = ["Mochi", "Pip", "Juniper", "Biscuit", "Nova", "Sunny", "Pebble", "Ziggy", "Clover", "Bean", "Marlo", "Tofu"];
+const COLORS = ["#ff7a59", "#4da6ff", "#ffd23f", "#52d273", "#c77dff", "#ff6fb5", "#3de0d0", "#a0785a"];
+const HATS = { none: "🚫", cap: "🧢", tophat: "🎩", beanie: "🧶", crown: "👑", party: "🥳", flower: "🌼", cowboy: "🤠" };
+const EMOTES = { wave: "👋", dance: "💃", jump: "⤴️", sit: "🪑" };
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'hangout-plaza',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+if (ATTRACT) Object.assign(CONFIG, { seats: 11, botTalk: [2500, 6000] });
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const cache = new Map();
+/** A JSON field (shared or a player's), parsed once per change. Read-only. */
+function field(key, raw, fb) { const m = cache.get(key); if (m && m.raw === raw) return m.v; const v = parse(raw, fb); cache.set(key, { raw, v }); return v; }
+let net = null, S = { entities: { players: {} }, shared: {} };
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+
+// ── PLAZA ───────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+renderer.shadowMap.enabled = true;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+function canvasTex(w, h, paint, rx, ry) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  if (rx) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); }
+  return t;
+}
+scene.background = canvasTex(4, 256, (c, w, h) => { const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#6fbff2"); g.addColorStop(0.7, "#cfeafc"); g.addColorStop(1, "#eaf6ff"); c.fillStyle = g; c.fillRect(0, 0, w, h); });
+scene.fog = new THREE.Fog("#dff1fd", 45, 95);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.3, 300);
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+scene.add(new THREE.HemisphereLight("#e8f4ff", "#5f8f45", 1.6));
+const sun = new THREE.DirectionalLight("#fff1d8", 2.2);
+sun.position.set(18, 30, 12); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 90 }); sun.shadow.bias = -0.0005;
+scene.add(sun);
+
+const mat = (color, more) => new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...more });
+const add = (geo, m, x, y, z, shadow = true) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = shadow; o.receiveShadow = true; scene.add(o); return o; };
+const noise = (c, w, h, n, col) => { for (let i = 0; i < n; i++) { c.fillStyle = col(); c.fillRect(Math.random() * w, Math.random() * h, 3, 3); } };
+const grass = canvasTex(64, 64, (c, w, h) => { c.fillStyle = "#7cc35a"; c.fillRect(0, 0, w, h); noise(c, w, h, 400, () => (Math.random() < 0.5 ? "#6fb54f" : "#8ad066")); }, 40, 40);
+add(new THREE.CircleGeometry(90, 48).rotateX(-Math.PI / 2), mat("#ffffff", { map: grass }), 0, 0, 0, false);
+const stones = canvasTex(128, 128, (c, w, h) => {
+  c.fillStyle = "#cbbca6"; c.fillRect(0, 0, w, h);
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) { c.fillStyle = ["#d8cab4", "#c8b89f", "#e0d3bf", "#cfc0a8"][(x * 3 + y * 5) % 4]; c.fillRect(x * 32 + 2 + (y % 2) * 16, y * 32 + 2, 28, 28); }
+}, 12, 12);
+add(new THREE.CircleGeometry(CONFIG.plaza, 64).rotateX(-Math.PI / 2), mat("#ffffff", { map: stones }), 0, 0.02, 0, false);
+for (let i = 0; i < 4; i++) { // four paths out to the trees
+  const p = add(new THREE.PlaneGeometry(4, 16).rotateX(-Math.PI / 2), mat("#ffffff", { map: stones }), 0, 0.015, 0, false);
+  p.rotation.y = (i * Math.PI) / 2; p.position.set(Math.sin(p.rotation.y) * 26, 0.015, Math.cos(p.rotation.y) * 26);
+}
+// The fountain: a stone basin, a pillar, a top bowl and arcs of water.
+const stone = mat("#e8e2d6"), water = mat("#5cc8f2", { roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.88 });
+add(new THREE.CylinderGeometry(4.6, 4.9, 0.9, 40), stone, 0, 0.45, 0);
+add(new THREE.CylinderGeometry(4.15, 4.15, 0.1, 40), water, 0, 0.9, 0, false);
+add(new THREE.CylinderGeometry(0.45, 0.6, 2.2, 16), stone, 0, 1.6, 0);
+add(new THREE.CylinderGeometry(1.7, 0.7, 0.45, 24), stone, 0, 2.55, 0);
+add(new THREE.CylinderGeometry(1.5, 1.5, 0.06, 24), water, 0, 2.79, 0, false);
+add(new THREE.SphereGeometry(0.35, 12, 10), stone, 0, 3.1, 0);
+const drops = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), mat("#bfeaff", { emissive: "#6fd0ff", emissiveIntensity: 0.4 }), 140);
+scene.add(drops);
+const dropM = new THREE.Matrix4();
+function animateFountain(t) {
+  for (let i = 0; i < 140; i++) {
+    const top = i < 70, a = (i * 2.399) % (Math.PI * 2), p = (t * (top ? 0.9 : 0.7) + (i * 0.618) % 1) % 1;
+    const r = top ? 0.3 + p * 1.3 : 1.6 + p * 1.9, y = top ? 3.3 + 1.1 * p - 1.6 * p * p : 2.75 + 0.3 * p - 2.2 * p * p;
+    drops.setMatrixAt(i, dropM.makeTranslation(Math.cos(a) * r, y, Math.sin(a) * r));
+  }
+  drops.instanceMatrix.needsUpdate = true;
+}
+const solids = [{ x: 0, z: 0, r: 5.0 }]; // circles you bump into
+const seats = []; // { x, z, h } places to sit on a bench
+const wood = mat("#b07a4a"), iron = mat("#3b3f4a", { roughness: 0.5, metalness: 0.4 });
+for (let i = 0; i < 6; i++) { // benches around the fountain, facing it
+  const a = (i / 6) * Math.PI * 2 + Math.PI / 6, x = Math.sin(a) * 10.5, z = Math.cos(a) * 10.5, b = new THREE.Group();
+  for (const [w, h, d, y, zz] of [[3, 0.15, 0.8, 0.5, 0], [3, 0.7, 0.12, 0.95, 0.42]]) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wood); m.position.set(0, y, zz); m.castShadow = true; b.add(m); }
+  for (const s of [-1.3, 1.3]) { const l = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.8), iron); l.position.set(s, 0.25, 0); b.add(l); }
+  b.position.set(x, 0, z); b.rotation.y = a; scene.add(b);
+  const tx = Math.cos(a), tz = -Math.sin(a);
+  for (const s of [-0.7, 0.7]) { seats.push({ x: x + tx * s, z: z + tz * s, h: a + Math.PI }); solids.push({ x: x + tx * s * 1.4, z: z + tz * s * 1.4, r: 0.75 }); }
+}
+// Lamps, trees and flowers (instanced: one draw call each).
+const bulb = mat("#fff4c2", { emissive: "#ffe08a", emissiveIntensity: 0.9 });
+for (let i = 0; i < 8; i++) {
+  const a = (i / 8) * Math.PI * 2 + Math.PI / 8, x = Math.sin(a) * (CONFIG.plaza - 0.8), z = Math.cos(a) * (CONFIG.plaza - 0.8);
+  add(new THREE.CylinderGeometry(0.1, 0.14, 3.4, 8), iron, x, 1.7, z); add(new THREE.SphereGeometry(0.32, 12, 10), bulb, x, 3.5, z, false);
+  solids.push({ x, z, r: 0.35 });
+}
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const seeded = mulberry32(11), M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), SC = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.28, 0.4, 1.8, 7), mat("#8a5a34"), 46);
+const leaves = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.7, 0), mat("#ffffff", { flatShading: true }), 46);
+const greens = ["#4fae4a", "#5fbf55", "#3f9d48", "#7cc35a", "#ff9fb8"];
+for (let i = 0, n = 0; n < 46 && i < 500; i++) {
+  const a = seeded() * Math.PI * 2, r = 23.5 + seeded() * 9, x = Math.sin(a) * r, z = Math.cos(a) * r;
+  if (Math.min(Math.abs(x), Math.abs(z)) < 3.5 || solids.some((s) => Math.hypot(s.x - x, s.z - z) < 3)) continue;
+  const s = 0.8 + seeded() * 0.6;
+  trunks.setMatrixAt(n, M4.compose(V.set(x, 0.9 * s, z), Q.identity(), SC.set(s, s, s)));
+  leaves.setMatrixAt(n, M4.compose(V.set(x, 2.6 * s, z), Q.setFromAxisAngle(UP, seeded() * 3), SC.set(s, s * 1.15, s)));
+  leaves.setColorAt(n, new THREE.Color(greens[Math.floor(seeded() * (n % 9 === 0 ? 5 : 4))]));
+  solids.push({ x, z, r: 0.6 * s }); n++;
+}
+trunks.castShadow = leaves.castShadow = true; scene.add(trunks, leaves);
+const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 6, 5), mat("#ffffff", { emissive: "#222" }), 160);
+const petal = ["#ff6fb5", "#ffd23f", "#ffffff", "#c77dff", "#ff7a59"];
+for (let i = 0; i < 160; i++) {
+  const a = seeded() * Math.PI * 2, r = CONFIG.plaza + 0.6 + seeded() * 1.4;
+  if (Math.min(Math.abs(Math.sin(a) * r), Math.abs(Math.cos(a) * r)) < 2.6) { flowers.setMatrixAt(i, M4.makeScale(0, 0, 0)); continue; }
+  flowers.setMatrixAt(i, M4.makeTranslation(Math.sin(a) * r, 0.2, Math.cos(a) * r)); flowers.setColorAt(i, new THREE.Color(petal[i % 5]));
+}
+scene.add(flowers);
+/** Push a walker out of anything solid and keep it inside the park. */
+function bump(o) {
+  for (const s of solids) { const dx = o.x - s.x, dz = o.z - s.z, d = Math.hypot(dx, dz), min = s.r + 0.4; if (d < min && d > 0.001) { o.x = s.x + (dx / d) * min; o.z = s.z + (dz / d) * min; } }
+  const r = Math.hypot(o.x, o.z); if (r > CONFIG.edge) { o.x *= CONFIG.edge / r; o.z *= CONFIG.edge / r; }
+}
+const freeSeat = (x, z, taken) => seats.filter((s) => !taken.some((o) => Math.hypot(o.x - s.x, o.z - s.z) < 0.5)).sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0];
+const onSeat = (x, z) => seats.find((s) => Math.hypot(s.x - x, s.z - z) < 0.3);
+
+// ── AVATARS ─────────────────────────────────────────────────────────────────────────
+const skin = mat("#ffe0c2"), black = mat("#1d2433"), blush = mat("#ff9fb0"), shoe = mat("#3a3f4f");
+const H = { // hat builders: each returns a group sitting on top of the head
+  cap: (c) => [[new THREE.SphereGeometry(0.42, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), c, 0, 0], [new THREE.CylinderGeometry(0.3, 0.3, 0.05, 16), c, 0.02, 0.35]],
+  tophat: () => [[new THREE.CylinderGeometry(0.5, 0.5, 0.05, 20), mat("#222"), 0, 0], [new THREE.CylinderGeometry(0.3, 0.32, 0.55, 20), mat("#222"), 0.3, 0], [new THREE.CylinderGeometry(0.325, 0.325, 0.1, 20), mat("#d0404a"), 0.1, 0]],
+  beanie: (c) => [[new THREE.SphereGeometry(0.45, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), c, -0.08, 0], [new THREE.SphereGeometry(0.13, 10, 8), mat("#fff"), 0.4, 0]],
+  crown: () => [[new THREE.CylinderGeometry(0.34, 0.34, 0.22, 10, 1, true), mat("#ffc83d", { metalness: 0.6, roughness: 0.3, side: THREE.DoubleSide }), 0.08, 0], ...[0, 1, 2, 3, 4].map((i) => [new THREE.ConeGeometry(0.07, 0.18, 6), mat("#ffc83d", { metalness: 0.6, roughness: 0.3 }), 0.28, 0, i])],
+  party: () => [[new THREE.ConeGeometry(0.25, 0.65, 16), mat("#ff6fb5"), 0.3, 0], [new THREE.SphereGeometry(0.09, 8, 6), mat("#ffd23f"), 0.65, 0]],
+  flower: () => [0, 1, 2, 3, 4].map((i) => [new THREE.SphereGeometry(0.1, 8, 6), mat("#ffffff"), 0.05, 0, i, "petal"]).concat([[new THREE.SphereGeometry(0.08, 8, 6), mat("#ffd23f"), 0.05, 0, -1, "petal"]]),
+  cowboy: () => [[new THREE.CylinderGeometry(0.7, 0.7, 0.05, 20), mat("#9a6634"), 0, 0], [new THREE.CylinderGeometry(0.3, 0.36, 0.38, 20), mat("#9a6634"), 0.2, 0]],
+};
+function buildHat(kind, color) {
+  const g = new THREE.Group(), parts = H[kind] ? H[kind](mat(color)) : [];
+  for (const [geo, m, y, z, i, petal] of parts) {
+    const o = new THREE.Mesh(geo, m); o.position.set(0, y, z); o.castShadow = true;
+    if (kind === "crown" && i !== undefined) o.position.set(Math.sin((i / 5) * Math.PI * 2) * 0.3, y, Math.cos((i / 5) * Math.PI * 2) * 0.3);
+    if (petal) o.position.set(0.32 + (i >= 0 ? Math.cos((i / 5) * Math.PI * 2) * 0.12 : 0), 0.05 + (i >= 0 ? Math.sin((i / 5) * Math.PI * 2) * 0.12 : 0), 0.15);
+    g.add(o);
+  }
+  return g;
+}
+const capsule = new THREE.CapsuleGeometry(0.42, 0.4, 4, 14), headGeo = new THREE.SphereGeometry(0.46, 18, 14), eyeGeo = new THREE.SphereGeometry(0.06, 8, 6), armGeo = new THREE.CapsuleGeometry(0.1, 0.32, 3, 8), footGeo = new THREE.SphereGeometry(0.15, 10, 8);
+function makeAvatar() {
+  const g = new THREE.Group(), rig = new THREE.Group(), bodyMat = mat("#ccc");
+  const part = (geo, m, x, y, z, parent = rig) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
+  part(capsule, bodyMat, 0, 0.75, 0);
+  const head = new THREE.Group(); head.position.y = 1.55; rig.add(head);
+  part(headGeo, skin, 0, 0, 0, head);
+  for (const s of [-1, 1]) { part(eyeGeo, black, s * 0.15, 0.05, 0.42, head); part(eyeGeo, blush, s * 0.27, -0.08, 0.36, head).scale.set(1.3, 0.7, 0.6); }
+  const arms = [-1, 1].map((s) => { const p = new THREE.Group(); p.position.set(s * 0.5, 1.05, 0); rig.add(p); part(armGeo, bodyMat, 0, -0.22, 0, p); return p; });
+  const feet = [-1, 1].map((s) => part(footGeo, shoe, s * 0.2, 0.12, 0.05));
+  const hat = new THREE.Group(); hat.position.y = 0.36; head.add(hat);
+  g.add(rig); scene.add(g);
+  return { g, rig, head, arms, feet, hat, bodyMat, look: "", x: 0, z: 0, h: 0, fresh: true, speed: 0, emote: "", ek: -1, emoteAt: 0, tag: null };
+}
+function setLook(v, look) {
+  const key = JSON.stringify(look); if (v.look === key) return; v.look = key;
+  v.bodyMat.color.set(look.c || "#ccc");
+  v.hat.clear(); v.hat.add(buildHat(look.hat, look.c));
+  if (v.tag) v.tag.name.textContent = look.n || "Player";
+}
+/** Walk bob, and the four emotes. `e`/`ek` come from state; a new `ek` restarts the emote. */
+function animate(v, e, ek, dt, t) {
+  if (ek !== v.ek || e !== v.emote) { v.emote = e; v.ek = ek; v.emoteAt = t; }
+  const since = t - v.emoteAt, walk = Math.min(1, v.speed / 3), sw = Math.sin(t * 11) * walk;
+  let y = Math.abs(Math.sin(t * 11)) * 0.1 * walk, spin = 0, armL = sw * 0.6, armR = -sw * 0.6, armZ = 0.15, foot = sw * 0.12, sit = false;
+  if (e === "wave" && since < CONFIG.waveMs / 1000) { armR = 0; armZ = 0.15; v.arms[1].rotation.set(0, 0, 2.5 + Math.sin(t * 12) * 0.45); }
+  if (e === "dance") { y = Math.abs(Math.sin(t * 8)) * 0.22; spin = Math.sin(t * 4) * 0.7; armL = -2.6 + Math.sin(t * 8) * 0.5; armR = -2.6 - Math.sin(t * 8) * 0.5; }
+  if (e === "jump" && since < CONFIG.jumpMs / 1000) { const p = since / (CONFIG.jumpMs / 1000); y = Math.sin(p * Math.PI) * 1.3; armL = armR = -2.8 * Math.sin(p * Math.PI); }
+  if (e === "sit") { sit = true; y = onSeat(v.x, v.z) ? 0.08 : -0.38; armL = armR = -0.5; }
+  v.rig.position.y = y; v.rig.rotation.y = spin;
+  v.arms[0].rotation.set(armL, 0, -armZ);
+  if (!(e === "wave" && since < CONFIG.waveMs / 1000)) v.arms[1].rotation.set(armR, 0, armZ);
+  v.feet.forEach((f, i) => { f.position.z = sit ? 0.45 : 0.05 + (i ? foot : -foot); f.position.y = sit ? 0.42 : 0.12; });
+}
+const views = new Map(); // id -> avatar, for everyone (me included)
+function viewOf(id) {
+  let v = views.get(id);
+  if (!v) {
+    v = makeAvatar();
+    const el = document.createElement("div"); el.className = "tag";
+    el.innerHTML = `<div class="bubble"></div><div class="name"></div>`; $("tags").appendChild(el);
+    v.tag = { el, bubble: el.firstChild, name: el.lastChild, text: "", until: 0 };
+    if (!touch) v.tag.name.onclick = () => openPeople(id); else v.tag.name.style.pointerEvents = "none"; // on phones a tap walks; mute is in 👥
+    views.set(id, v);
+  }
+  return v;
+}
+function dropView(id) { const v = views.get(id); if (v) { scene.remove(v.g); v.tag.el.remove(); views.delete(id); } }
+const proj = new THREE.Vector3();
+/** Name tags and bubbles follow the avatars on screen. */
+function placeTag(v, id, now) {
+  proj.set(v.x, 2.55 + (v.emote === "jump" ? v.rig.position.y : 0), v.z).project(camera);
+  const d = camera.position.distanceTo(v.g.position), show = proj.z < 1 && d < 45;
+  v.tag.el.style.display = show ? "" : "none";
+  if (!show) return;
+  const bubble = v.tag.until > now && !muted.has(id) ? v.tag.text : "";
+  if (v.tag.bubble.textContent !== bubble) v.tag.bubble.textContent = bubble;
+  v.tag.name.style.display = ATTRACT ? "none" : "";
+  v.tag.el.style.transform = `translate(-50%, -100%) translate(${((proj.x + 1) / 2) * innerWidth}px, ${((1 - proj.y) / 2) * innerHeight}px) scale(${Math.max(0.6, Math.min(1, 14 / d))})`;
+  v.tag.el.style.zIndex = String(1000 - Math.round(d * 10));
+}
+
+// ── BOTS (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { was: false, bots: new Map(), lastPub: 0, greeted: new Set(), queue: [], deck: [] };
+const rnd = (a, b) => a + Math.random() * (b - a), pick = (list) => list[Math.floor(Math.random() * list.length)];
+function botList() {
+  if (isHost()) return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, hat: b.hat, x: b.x, z: b.z, ry: b.h, e: b.e, ek: b.ek, w: b.w, st: b.say.t, sk: b.say.k }));
+  return field("shared:bots", S.shared.bots, []);
+}
+function adoptBots() {
+  host.was = true; host.bots.clear();
+  for (const id of livePlayers()) if (id !== net.sessionId || S.shared.bots) host.greeted.add(id); // a fresh room greets you
+  for (const b of field("shared:bots", S.shared.bots, [])) host.bots.set(b.i, newBot(b.i, { name: b.n, color: b.c, hat: b.hat, x: b.x, z: b.z, h: b.ry, e: b.e, ek: b.ek, say: { t: b.st || "", k: b.sk || 0 } }));
+}
+function newBot(id, from) {
+  const used = new Set([...host.bots.values()].map((b) => b.name)), a = rnd(0, Math.PI * 2), r = rnd(7, 18);
+  return { id, name: BOT_NAMES.find((n) => !used.has(n)) || "Bot", color: pick(COLORS), hat: pick(Object.keys(HATS).slice(1)), x: Math.sin(a) * r, z: Math.cos(a) * r, h: 0,
+    e: "", ek: 0, w: 0, say: { t: "", k: 0 }, goal: null, then: "", until: 0, nextSay: performance.now() + rnd(1500, CONFIG.botTalk[1]), ...from };
+}
+/** What a bot does next: wander, sit on a bench, admire the fountain, visit someone, or dance. */
+function decide(b, now) {
+  const r = Math.random(), people = everyone().filter((p) => p.id !== b.id);
+  b.e = ""; b.w = 0;
+  if (r < 0.3) { const a = rnd(0, Math.PI * 2), d = rnd(6, CONFIG.plaza - 2); b.goal = { x: Math.sin(a) * d, z: Math.cos(a) * d }; b.then = pick(["", "", "wave", "jump"]); }
+  else if (r < 0.5) { const s = freeSeat(b.x, b.z, [...people, ...[...host.bots.values()].filter((o) => o !== b && o.goal).map((o) => o.goal)]); b.goal = s ? { x: s.x, z: s.z, h: s.h } : null; b.then = "sit"; }
+  else if (r < 0.65) { const a = Math.atan2(b.x, b.z) + rnd(-0.6, 0.6); b.goal = { x: Math.sin(a) * 5.8, z: Math.cos(a) * 5.8, h: a + Math.PI }; b.then = "wave"; }
+  else if (r < 0.82 && people.length) { const p = pick(people), a = rnd(0, Math.PI * 2); b.goal = { x: p.x + Math.sin(a) * 2, z: p.z + Math.cos(a) * 2, face: p.id }; b.then = pick(["wave", "dance", "jump"]); }
+  else { b.goal = null; b.then = ""; b.e = pick(["dance", "dance", "jump", "wave"]); b.ek++; b.until = now + rnd(3000, 6000); }
+}
+function botLine(b, text, emote) { b.say = { t: text, k: b.say.k + 1 }; if (emote) { b.e = emote; b.ek++; } bubble(b.id, b.name, b.color, text); }
+function hostTick(dt, now) {
+  if (!host.was) adoptBots();
+  const humans = livePlayers().filter((id) => !(ATTRACT && id === net.sessionId)), want = Math.max(0, CONFIG.seats - humans.length - (ATTRACT ? 1 : 0));
+  while (host.bots.size > want) host.bots.delete([...host.bots.keys()].pop());
+  while (host.bots.size < want) { const id = "b" + Math.random().toString(36).slice(2, 6); host.bots.set(id, newBot(id)); }
+  const bots = [...host.bots.values()];
+  for (const id of humans) { // a bot says hi to everyone who arrives
+    const look = id === net.sessionId ? myLook : lookOf(id);
+    if (look.n && !host.greeted.has(id) && bots.length) { host.greeted.add(id); host.queue.push({ at: now + 1500, id: pick(bots).id, text: pick(CONFIG.greet).replace("{name}", look.n), emote: "wave" }); }
+  }
+  for (const q of host.queue.filter((q) => now >= q.at)) { const b = host.bots.get(q.id); if (b) botLine(b, q.text, q.emote); }
+  host.queue = host.queue.filter((q) => now < q.at);
+  for (const b of bots) {
+    if (b.goal) {
+      const dx = b.goal.x - b.x, dz = b.goal.z - b.z, d = Math.hypot(dx, dz), step = CONFIG.speed * 0.75 * dt;
+      if (d > 0.35) { b.x += (dx / d) * step; b.z += (dz / d) * step; b.h += Math.atan2(Math.sin(Math.atan2(dx, dz) - b.h), Math.cos(Math.atan2(dx, dz) - b.h)) * Math.min(1, dt * 8); b.w = 1; if (d > 1.3 || b.then !== "sit") bump(b); }
+      else {
+        const face = b.goal.face && everyone().find((p) => p.id === b.goal.face);
+        b.h = face ? Math.atan2(face.x - b.x, face.z - b.z) : b.goal.h ?? b.h;
+        if (b.then === "sit") { b.x = b.goal.x; b.z = b.goal.z; }
+        b.goal = null; b.w = 0; b.e = b.then; b.ek++; b.until = now + (b.then === "sit" ? rnd(6000, 12000) : rnd(2500, 5000));
+      }
+      if (b.goal && performance.now() > b.until + 15000) b.goal = null; // stuck: give up
+    } else if (now > b.until) { b.until = now + 4000; decide(b, now); }
+    if (now > b.nextSay) { b.nextSay = now + rnd(...CONFIG.botTalk); if (!host.deck.length) host.deck = [...CONFIG.botLines].sort(() => Math.random() - 0.5); botLine(b, host.deck.pop()); } // each line once before any repeats
+  }
+  if (now - host.lastPub > 120) { // ~8/s, one message for every bot
+    host.lastPub = now; const r2 = (v) => Math.round(v * 100) / 100;
+    net.setShared("bots", JSON.stringify(botList().map((b) => ({ ...b, x: r2(b.x), z: r2(b.z), ry: r2(b.ry) }))));
+  }
+}
+/** Bots answer when someone says hi. */
+function maybeReply(name, text) {
+  if (!isHost() || !/\b(hi|hey|hello|yo|hiya|howdy)\b/i.test(text) || !host.bots.size) return;
+  host.queue.push({ at: performance.now() + rnd(900, 1800), id: pick([...host.bots.keys()]), text: pick(["Hey {name}! 😄", "Hi {name}!", "Hello {name} 👋"]).replace("{name}", name), emote: "wave" });
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+const FRIENDLY = ["Happy", "Sunny", "Comfy", "Bouncy", "Cosy", "Breezy"], CRITTERS = ["Panda", "Duck", "Koala", "Bunny", "Otter", "Kitten"];
+const stored = (k) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } };
+const keep = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+const myLook = { n: stored("mpa-name") || pick(FRIENDLY) + " " + pick(CRITTERS), c: COLORS[0], hat: parse(stored("plaza.look"), {}).hat || pick(Object.keys(HATS).slice(1)) };
+const me = { x: 0, z: 14, h: Math.PI, e: "", ek: 0, w: 0, target: null, lastSend: 0, sent: "", sayK: 0, lastSay: 0 };
+const cam = { yaw: 0, pitch: 0.42 };
+const keys = new Set();
+
+function myTick(dt, now) {
+  let mx = 0, mz = 0;
+  if (!typing()) {
+    const f = (keys.has("w") || keys.has("arrowup") ? 1 : 0) - (keys.has("s") || keys.has("arrowdown") ? 1 : 0), r = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
+    if (f || r) { me.target = null; mx = -Math.sin(cam.yaw) * f + Math.cos(cam.yaw) * r; mz = -Math.cos(cam.yaw) * f - Math.sin(cam.yaw) * r; }
+  }
+  if (ATTRACT) autopilot(now);
+  if (me.target) { const dx = me.target.x - me.x, dz = me.target.z - me.z, d = Math.hypot(dx, dz); if (d < 0.3) me.target = null; else { mx = dx / d; mz = dz / d; } }
+  const len = Math.hypot(mx, mz);
+  me.w = len > 0 ? 1 : 0;
+  if (len > 0) {
+    if (me.e === "sit" || me.e === "dance") me.e = "";
+    me.x += (mx / len) * CONFIG.speed * dt * (ATTRACT ? 0.75 : 1); me.z += (mz / len) * CONFIG.speed * dt * (ATTRACT ? 0.75 : 1); bump(me);
+    me.h += Math.atan2(Math.sin(Math.atan2(mx, mz) - me.h), Math.cos(Math.atan2(mx, mz) - me.h)) * Math.min(1, dt * 10);
+  }
+  const r2 = (v) => Math.round(v * 100) / 100, a = JSON.stringify({ x: r2(me.x), z: r2(me.z), ry: r2(me.h), e: me.e, ek: me.ek, w: me.w });
+  if ((a !== me.sent && now - me.lastSend > 100) || now - me.lastSend > 2000) { me.lastSend = now; me.sent = a; net.me.set("a", a); }
+}
+function emote(e) {
+  if (e === "sit") { const s = freeSeat(me.x, me.z, everyone().filter((p) => p.id !== net.sessionId)); if (s && Math.hypot(s.x - me.x, s.z - me.z) < 2.2) { me.x = s.x; me.z = s.z; me.h = s.h; } }
+  me.e = e; me.ek++; me.target = null; $("wheel").hidden = true;
+}
+/** ?attract: your avatar strolls between friends and emotes now and then. */
+const auto = { at: 0 };
+function autopilot(now) {
+  if (now < auto.at) return;
+  auto.at = now + rnd(2500, 4500);
+  const a = rnd(0, Math.PI * 2), d = rnd(7, 15);
+  if (Math.random() < 0.6) me.target = { x: Math.sin(a) * d, z: Math.cos(a) * d }; else emote(pick(["dance", "wave", "jump"]));
+}
+function sendChat() {
+  const input = $("say"), text = input.value.trim().slice(0, 80), now = performance.now();
+  input.value = ""; input.blur();
+  if (!text || now - me.lastSay < CONFIG.chatGapMs) return;
+  me.lastSay = now; me.sayK++;
+  net.send("chat", { t: text, k: me.sayK });
+  net.me.set("say", JSON.stringify({ t: text, k: me.sayK }));
+  heard.set(net.sessionId, me.sayK);
+  bubble(net.sessionId, myLook.n, myLook.c, text);
+  maybeReply(myLook.n, text);
+}
+function saveLook() { net.me.set("look", JSON.stringify(myLook)); keep("mpa-name", myLook.n); keep("plaza.look", JSON.stringify({ hat: myLook.hat })); }
+/** Right after joining, keep a color nobody else has: whoever joined later (look.j) gives way, while a free color is left. */
+let joinedAt = 0;
+function fixColor() {
+  if (performance.now() - joinedAt > 6000) return; // after that, your pick in the look panel stands
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([id]) => ({ id, ...lookOf(id) }));
+  if (!others.some((o) => o.c === myLook.c && (o.j < myLook.j || (o.j === myLook.j && o.id < net.sessionId)))) return;
+  const free = COLORS.find((c) => !others.some((o) => o.c === c));
+  if (free) { myLook.c = free; saveLook(); }
+}
+
+// ── CHAT & PEOPLE ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const typing = () => document.activeElement === $("say") || document.activeElement === $("nameIn");
+const touch = matchMedia("(pointer: coarse)").matches;
+const muted = new Set(), heard = new Map(), lines = []; // heard: id -> last chat k shown
+function lookOf(id) { const p = S.entities.players[id]; return field("look:" + id, p && p.look, {}); }
+/** Show a line: a bubble over the avatar and a row in the log. */
+function bubble(id, name, color, text, log = true) {
+  const v = viewOf(id); v.tag.text = text; v.tag.until = performance.now() + CONFIG.bubbleMs;
+  if (!log) return;
+  lines.push({ id, name, color, text }); if (lines.length > 40) lines.shift();
+  drawLog();
+}
+function drawLog() {
+  if (ATTRACT) return;
+  $("log").innerHTML = lines.filter((l) => !muted.has(l.id)).slice(-6).map((l, i, all) => `<div style="opacity:${0.45 + (0.55 * (i + 1)) / all.length}"><b style="color:${esc(l.color)}">${esc(l.name)}</b> ${esc(l.text)}</div>`).join("");
+}
+/** Everyone in the plaza: { id, name, color, x, z, bot } */
+function everyone() {
+  const out = [], live = new Set(livePlayers());
+  for (const id of Object.keys(S.entities.players || {})) {
+    if (id === net.sessionId) { out.push({ id, name: myLook.n, color: myLook.c, x: me.x, z: me.z, mine: true }); continue; }
+    const a = field("a:" + id, S.entities.players[id].a, null), look = lookOf(id);
+    if (a && live.has(id)) out.push({ id, name: look.n || "Player", color: look.c || "#ccc", x: a.x, z: a.z });
+  }
+  for (const b of botList()) out.push({ id: b.i, name: b.n, color: b.c, x: b.x, z: b.z, bot: true });
+  return out;
+}
+let peopleFocus = "";
+function openPeople(focus) { peopleFocus = focus || ""; drawPeople(); $("peoplePanel").hidden = false; }
+function drawPeople() {
+  const list = everyone().sort((a, b) => (a.mine ? -1 : b.mine ? 1 : a.id === peopleFocus ? -1 : b.id === peopleFocus ? 1 : (a.bot ? 1 : 0) - (b.bot ? 1 : 0)));
+  $("peopleList").innerHTML = list.map((p) => `<div class="row"><i style="background:${esc(p.color)}"></i>${esc(p.mine ? p.name + " (you)" : p.name)}${p.bot ? " <em>bot</em>" : ""}${p.mine ? "" : `<button data-id="${esc(p.id)}">${muted.has(p.id) ? "🔇 Unmute" : "Mute"}</button>`}</div>`).join("");
+  for (const b of $("peopleList").querySelectorAll("button")) b.onclick = () => { const id = b.dataset.id; if (muted.has(id)) muted.delete(id); else muted.add(id); drawPeople(); drawLog(); };
+}
+$("peopleBtn").onclick = () => openPeople("");
+$("peopleClose").onclick = () => { $("peoplePanel").hidden = true; };
+
+function openLook() {
+  $("nameIn").value = myLook.n;
+  const opts = (el, list, key, label) => { el.innerHTML = list.map((v) => `<button data-v="${v}" class="${myLook[key] === v ? "on" : ""}" ${key === "c" ? `style="background:${v}"` : ""}>${label(v)}</button>`).join("");
+    for (const b of el.children) b.onclick = () => { myLook.n = $("nameIn").value.trim().slice(0, 16) || myLook.n; myLook[key] = b.dataset.v; openLook(); saveLook(); }; };
+  opts($("colorOpts"), COLORS, "c", () => ""); opts($("hatOpts"), Object.keys(HATS), "hat", (h) => HATS[h]);
+  $("lookPanel").hidden = false;
+}
+$("lookBtn").onclick = openLook;
+$("lookGo").onclick = () => { myLook.n = $("nameIn").value.trim().slice(0, 16) || myLook.n; saveLook(); $("lookPanel").hidden = true; };
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const wheel = $("wheel").firstElementChild;
+Object.entries(EMOTES).forEach(([e, icon], i) => {
+  const b = document.createElement("button"), a = (i / 4) * Math.PI * 2 - Math.PI / 2;
+  b.innerHTML = `<span>${icon}</span>${e}`; b.style.left = 120 + Math.cos(a) * 78 + "px"; b.style.top = 120 + Math.sin(a) * 78 + "px";
+  b.onclick = (ev) => { ev.stopPropagation(); emote(e); }; wheel.appendChild(b);
+});
+$("wheel").onclick = () => { $("wheel").hidden = true; };
+$("emoteBtn").onclick = () => { $("wheel").hidden = !$("wheel").hidden; };
+$("say").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendChat(); } if (e.key === "Escape") $("say").blur(); e.stopPropagation(); });
+addEventListener("keydown", (e) => {
+  if (typing()) return;
+  const k = e.key.toLowerCase();
+  if (k === "enter") { e.preventDefault(); $("say").focus(); return; }
+  if ("1234".includes(k) && k.length === 1) emote(Object.keys(EMOTES)[+k - 1]);
+  if (k === "e" || k === "q") $("wheel").hidden = !$("wheel").hidden;
+  keys.add(k);
+});
+addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => keys.clear());
+// Drag to look around; a tap (no drag) on the ground walks there.
+const cv = renderer.domElement, drag = { id: -1, x: 0, y: 0, moved: 0 }, ray = new THREE.Raycaster(), ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
+cv.addEventListener("pointerdown", (e) => { e.preventDefault(); $("say").blur(); if (drag.id < 0) Object.assign(drag, { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 }); });
+cv.addEventListener("pointermove", (e) => {
+  if (e.pointerId !== drag.id) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY; drag.moved += Math.abs(dx) + Math.abs(dy);
+  cam.yaw -= dx * 0.008; cam.pitch = Math.max(0.12, Math.min(1.1, cam.pitch + dy * 0.005));
+});
+for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => {
+  if (e.pointerId !== drag.id) return;
+  drag.id = -1;
+  if (ev === "pointerup" && drag.moved < 10) {
+    ray.setFromCamera({ x: (e.clientX / innerWidth) * 2 - 1, y: -(e.clientY / innerHeight) * 2 + 1 }, camera);
+    if (ray.ray.intersectPlane(ground, hit)) me.target = { x: hit.x, z: hit.z };
+  }
+});
+cv.addEventListener("wheel", (e) => { CONFIG.camDist = Math.max(5, Math.min(18, CONFIG.camDist + e.deltaY * 0.01)); }, { passive: true });
+document.addEventListener("touchmove", (e) => { if (e.target === cv) e.preventDefault(); }, { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000), t = now / 1000; last = now;
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); }
+  if (isHost()) hostTick(dt, now); else host.was = false;
+  myTick(dt, now);
+  // Everyone: humans from their entities, bots from the host, me from my own state.
+  const seen = new Set([net.sessionId]), live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === net.sessionId || !live.has(id)) continue;
+    const a = field("a:" + id, p.a, null); if (!a) continue;
+    const say = field("say:" + id, p.say, null), look = lookOf(id);
+    if (say && say.k > (heard.get(id) || 0)) { heard.set(id, say.k); bubble(id, look.n || "Player", look.c || "#ccc", String(say.t)); }
+    seen.add(id); show(viewOf(id), a.x, a.z, a.ry, a.e, a.ek, dt, t, { n: String(look.n ?? "Player"), c: look.c, hat: look.hat });
+  }
+  for (const b of botList()) {
+    if (b.sk > (heard.get(b.i) || 0)) { const first = !heard.has(b.i); heard.set(b.i, b.sk); if (!isHost() && b.st) bubble(b.i, b.n, b.c, b.st, !first); } // the host showed it already; old bot chatter skips the log
+    seen.add(b.i); show(viewOf(b.i), b.x, b.z, b.ry, b.e, b.ek, dt, t, { n: b.n, c: b.c, hat: b.hat });
+  }
+  const mine = viewOf(net.sessionId); setLook(mine, myLook);
+  mine.speed = me.w ? CONFIG.speed : 0; mine.x = me.x; mine.z = me.z; mine.g.position.set(me.x, 0, me.z); mine.g.rotation.y = me.h; animate(mine, me.e, me.ek, dt, t);
+  for (const id of [...views.keys()]) if (!seen.has(id)) dropView(id);
+  animateFountain(t);
+  // Camera: behind you, orbiting with drags. ?attract circles the plaza slowly.
+  if (ATTRACT) { const a = t * 0.1; camera.position.set(Math.sin(a) * 15.5, 7, Math.cos(a) * 15.5); camera.lookAt(0, 0.8, 0); }
+  else {
+    const d = CONFIG.camDist * (camera.aspect < 1 ? 1.35 : 1), want = new THREE.Vector3(me.x + Math.sin(cam.yaw) * Math.cos(cam.pitch) * d, 1.4 + Math.sin(cam.pitch) * d, me.z + Math.cos(cam.yaw) * Math.cos(cam.pitch) * d);
+    camera.position.lerp(want, 1 - Math.pow(0.0005, dt)); camera.lookAt(me.x, 1.4, me.z);
+  }
+  renderer.render(scene, camera);
+  for (const [id, v] of views) placeTag(v, id, now);
+  if (now - lastHud > 250) { lastHud = now; hud(now); fixColor(); }
+  requestAnimationFrame(frame);
+}
+function show(v, x, z, h, e, ek, dt, t, look) {
+  setLook(v, look);
+  if (v.fresh) { v.x = x; v.z = z; v.h = h; v.fresh = false; }
+  const k = 1 - Math.pow(0.001, dt), px = v.x, pz = v.z;
+  v.x += (x - v.x) * k; v.z += (z - v.z) * k; v.h += Math.atan2(Math.sin(h - v.h), Math.cos(h - v.h)) * k;
+  v.speed += (Math.hypot(v.x - px, v.z - pz) / Math.max(dt, 0.001) - v.speed) * 0.2;
+  v.g.position.set(v.x, 0, v.z); v.g.rotation.y = v.h;
+  animate(v, e || "", ek || 0, dt, t);
+}
+let started = 0;
+function hud(now) {
+  if (ATTRACT) { $("net").textContent = ""; $("hint").textContent = ""; return; }
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the bots" : ""}`;
+  if (!started) started = now;
+  $("hint").textContent = now - started < 12000 ? (touch ? "Tap the ground to walk · drag to look around · 😀 for emotes" : "WASD or click the ground to walk · drag to look · Enter to chat · 1–4 emotes") : "";
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("chat", (msg, from) => {
+    if (!msg || typeof msg.t !== "string") return;
+    const look = lookOf(from), text = msg.t.slice(0, 80);
+    if ((msg.k || 0) > (heard.get(from) || 0)) { heard.set(from, msg.k || 0); bubble(from, look.n || "Player", look.c || "#ccc", text); }
+    maybeReply(look.n || "friend", text);
+  });
+  net.onDisconnect(() => { $("net").textContent = "Reconnecting…"; });
+  const taken = new Set(Object.keys(S.entities.players || {}).filter((id) => id !== net.sessionId).map((id) => lookOf(id).c));
+  myLook.c = COLORS.find((c) => !taken.has(c)) || pick(COLORS);
+  myLook.j = Date.now(); // when you joined: settles who changes color if two players match
+  const a = rnd(-0.5, 0.5); me.x = Math.sin(a) * 15; me.z = Math.cos(a) * 15; me.h = a + Math.PI; cam.yaw = a;
+  net.me.set({ look: JSON.stringify(myLook), hb: Date.now() }); joinedAt = performance.now();
+  if (ATTRACT) { $("bar").hidden = true; $("log").hidden = true; } else if (!stored("plaza.look")) openLook();
+  camera.position.set(me.x, 6, me.z + 9);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

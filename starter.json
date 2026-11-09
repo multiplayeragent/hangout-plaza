@@ -1,0 +1,20 @@
+{
+  "name": "Hangout Plaza",
+  "genre": "social",
+  "dim": "3D",
+  "mode": "Drop-in",
+  "players": "2–30",
+  "hook": "Walk around, chat and emote.",
+  "how": "Pick a color and a hat, then stroll around a little plaza with a fountain, benches and trees. Chat in speech bubbles, wave, dance, jump or sit on a bench.",
+  "controls": "WASD or tap the ground to walk, drag to look around, Enter to chat, 1 to 4 or the 😀 button for emotes",
+  "uses": [
+    ["Live sync", "Everyone walks, chats and emotes in the same plaza at once."],
+    ["Bots", "Friendly bots wander, sit, dance and say hi until people arrive."],
+    ["Moderation", "Mute anyone from the people list; it hides their chat on your screen."]
+  ],
+  "ideas": [
+    "Add a dance floor with music",
+    "Add more hats and a shop to buy them",
+    "Add a mini game in one corner"
+  ]
+}
