@@ -167,7 +167,8 @@ function livePlayers() {
   }
   return out.sort();
 }
-const isHost = () => livePlayers()[0] === net.sessionId;
+let hostHold = 0, lastTick = performance.now(); // lastTick: when frame() last ran; hostHold: after a freeze, no hosting before this time (see frame())
+const isHost = () => performance.now() > hostHold && performance.now() - lastTick < 1000 && livePlayers()[0] === net.sessionId; // a tab whose loop has stopped doesn't host
 
 // ── PLAZA ───────────────────────────────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -577,6 +578,8 @@ document.addEventListener("touchmove", (e) => { if (e.target === cv) e.preventDe
 let last = performance.now(), lastHb = 0, lastHud = 0;
 function frame(now) {
   requestAnimationFrame(frame);
+  if (performance.now() - lastTick > 1000) { hostHold = performance.now() + 700; host.was = false; host.queue = []; } // the tab was frozen or in the background: someone else may have hosted meanwhile, so let its state arrive, then adopt it
+  lastTick = performance.now(); // not the rAF time: after a long freeze Chrome can stamp the first frame from before it ended
   const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)), t = now / 1000; last = now; // never negative: the first frame can be stamped before `last`
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); }
   if (isHost()) hostTick(dt, now); else host.was = false;
