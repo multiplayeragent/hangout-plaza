@@ -576,6 +576,7 @@ document.addEventListener("touchmove", (e) => { if (e.target === cv) e.preventDe
 // ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
 let last = performance.now(), lastHb = 0, lastHud = 0;
 function frame(now) {
+  requestAnimationFrame(frame);
   const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)), t = now / 1000; last = now; // never negative: the first frame can be stamped before `last`
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); }
   if (isHost()) hostTick(dt, now); else host.was = false;
@@ -606,7 +607,6 @@ function frame(now) {
   renderer.render(scene, camera);
   for (const [id, v] of views) placeTag(v, id, now);
   if (now - lastHud > 250) { lastHud = now; hud(now); fixColor(); }
-  requestAnimationFrame(frame);
 }
 function show(v, x, z, h, e, ek, dt, t, look) {
   setLook(v, look);
