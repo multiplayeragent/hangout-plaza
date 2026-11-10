@@ -361,7 +361,7 @@ function placeTag(v, id, now) {
 const host = { was: false, bots: new Map(), lastPub: 0, greeted: new Set(), queue: [], deck: [] };
 const rnd = (a, b) => a + Math.random() * (b - a), pick = (list) => list[Math.floor(Math.random() * list.length)];
 function botList() {
-  if (isHost()) return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, hat: b.hat, x: b.x, z: b.z, ry: b.h, e: b.e, ek: b.ek, w: b.w, st: b.say.t, sk: b.say.k }));
+  if (isHost() && host.was) return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, hat: b.hat, x: b.x, z: b.z, ry: b.h, e: b.e, ek: b.ek, w: b.w, st: b.say.t, sk: b.say.k }));
   return field("shared:bots", S.shared.bots, []);
 }
 function adoptBots() {
@@ -371,7 +371,8 @@ function adoptBots() {
 }
 function newBot(id, from) {
   const used = new Set([...host.bots.values()].map((b) => b.name)), a = rnd(0, Math.PI * 2), r = rnd(7, 18);
-  return { id, name: BOT_NAMES.find((n) => !used.has(n)) || "Bot", color: pick(COLORS), hat: pick(Object.keys(HATS).slice(1)), x: Math.sin(a) * r, z: Math.cos(a) * r, h: 0,
+  const worn = new Set(everyone().map((p) => p.color)), free = COLORS.filter((c) => !worn.has(c)); // a color nobody wears yet, if any is left
+  return { id, name: BOT_NAMES.find((n) => !used.has(n)) || "Bot", color: pick(free.length ? free : COLORS), hat: pick(Object.keys(HATS).slice(1)), x: Math.sin(a) * r, z: Math.cos(a) * r, h: 0,
     e: "", ek: 0, w: 0, say: { t: "", k: 0 }, goal: null, then: "", until: 0, nextSay: performance.now() + rnd(1500, CONFIG.botTalk[1]), ...from };
 }
 /** What a bot does next: wander, sit on a bench, admire the fountain, visit someone, or dance. */
@@ -473,13 +474,14 @@ function sendChat() {
   maybeReply(myLook.n, text);
 }
 function saveLook() { net.me.set("look", JSON.stringify(myLook)); keep("mpa-name", myLook.n); keep("plaza.look", JSON.stringify({ hat: myLook.hat })); }
-/** Right after joining, keep a color nobody else has: whoever joined later (look.j) gives way, while a free color is left. */
+/** Right after joining, keep a color nobody else has: whoever joined later (look.j) gives way, while a free color is left.
+ *  A bot wearing your color counts too. */
 let joinedAt = 0;
 function fixColor() {
   if (performance.now() - joinedAt > 6000) return; // after that, your pick in the look panel stands
-  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([id]) => ({ id, ...lookOf(id) }));
-  if (!others.some((o) => o.c === myLook.c && (o.j < myLook.j || (o.j === myLook.j && o.id < net.sessionId)))) return;
-  const free = COLORS.find((c) => !others.some((o) => o.c === c));
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([id]) => ({ id, ...lookOf(id) })), botColors = botList().map((b) => b.c);
+  if (!others.some((o) => o.c === myLook.c && (o.j < myLook.j || (o.j === myLook.j && o.id < net.sessionId))) && !botColors.includes(myLook.c)) return;
+  const free = COLORS.find((c) => !others.some((o) => o.c === c) && !botColors.includes(c));
   if (free) { myLook.c = free; saveLook(); }
 }
 
@@ -574,7 +576,7 @@ document.addEventListener("touchmove", (e) => { if (e.target === cv) e.preventDe
 // ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
 let last = performance.now(), lastHb = 0, lastHud = 0;
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000), t = now / 1000; last = now;
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)), t = now / 1000; last = now; // never negative: the first frame can be stamped before `last`
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); }
   if (isHost()) hostTick(dt, now); else host.was = false;
   myTick(dt, now);
@@ -616,10 +618,11 @@ function show(v, x, z, h, e, ek, dt, t, look) {
   animate(v, e || "", ek || 0, dt, t);
 }
 let started = 0;
+let dropped = false; // true while the connection is down: the HUD keeps showing "Reconnecting…"
 function hud(now) {
   if (ATTRACT) { $("net").textContent = ""; $("hint").textContent = ""; return; }
   const n = livePlayers().length;
-  $("net").textContent = net.offline ? "Offline: playing with bots" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the bots" : ""}`;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the bots" : ""}`;
   if (!started) started = now;
   $("hint").textContent = now - started < 12000 ? (touch ? "Tap the ground to walk · drag to look around · 😀 for emotes" : "WASD or click the ground to walk · drag to look · Enter to chat · 1–4 emotes") : "";
 }
@@ -633,8 +636,9 @@ function hud(now) {
     if ((msg.k || 0) > (heard.get(from) || 0)) { heard.set(from, msg.k || 0); bubble(from, look.n || "Player", look.c || "#ccc", text); }
     maybeReply(look.n || "friend", text);
   });
-  net.onDisconnect(() => { $("net").textContent = "Reconnecting…"; });
-  const taken = new Set(Object.keys(S.entities.players || {}).filter((id) => id !== net.sessionId).map((id) => lookOf(id).c));
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  const taken = new Set([...Object.keys(S.entities.players || {}).filter((id) => id !== net.sessionId).map((id) => lookOf(id).c), ...botList().map((b) => b.c)]);
   myLook.c = COLORS.find((c) => !taken.has(c)) || pick(COLORS);
   myLook.j = Date.now(); // when you joined: settles who changes color if two players match
   const a = rnd(-0.5, 0.5); me.x = Math.sin(a) * 15; me.z = Math.cos(a) * 15; me.h = a + Math.PI; cam.yaw = a;
