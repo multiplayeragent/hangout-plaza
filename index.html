@@ -246,6 +246,7 @@ for (let i = 0; i < 8; i++) {
 }
 function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const seeded = mulberry32(11), M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), SC = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+const canopies = [{ x: 0, y: 2.7, z: 0, r: 2.1 }]; // round things the camera stays out of: the fountain top and every tree's leaves
 const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.28, 0.4, 1.8, 7), mat("#8a5a34"), 46);
 const leaves = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.7, 0), mat("#ffffff", { flatShading: true }), 46);
 const greens = ["#4fae4a", "#5fbf55", "#3f9d48", "#7cc35a", "#ff9fb8"];
@@ -256,7 +257,7 @@ for (let i = 0, n = 0; n < 46 && i < 500; i++) {
   trunks.setMatrixAt(n, M4.compose(V.set(x, 0.9 * s, z), Q.identity(), SC.set(s, s, s)));
   leaves.setMatrixAt(n, M4.compose(V.set(x, 2.6 * s, z), Q.setFromAxisAngle(UP, seeded() * 3), SC.set(s, s * 1.15, s)));
   leaves.setColorAt(n, new THREE.Color(greens[Math.floor(seeded() * (n % 9 === 0 ? 5 : 4))]));
-  solids.push({ x, z, r: 0.6 * s }); n++;
+  solids.push({ x, z, r: 0.6 * s }); canopies.push({ x, y: 2.6 * s, z, r: 2 * s + 0.3 }); n++;
 }
 trunks.castShadow = leaves.castShadow = true; scene.add(trunks, leaves);
 const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 6, 5), mat("#ffffff", { emissive: "#222" }), 160);
@@ -272,6 +273,19 @@ function bump(o) {
   for (const s of solids) { const dx = o.x - s.x, dz = o.z - s.z, d = Math.hypot(dx, dz), min = s.r + 0.4; if (d < min && d > 0.001) { o.x = s.x + (dx / d) * min; o.z = s.z + (dz / d) * min; } }
   const r = Math.hypot(o.x, o.z); if (r > CONFIG.edge) { o.x *= CONFIG.edge / r; o.z *= CONFIG.edge / r; }
 }
+/** Walking from o toward a goal along (mx, mz): bend round a solid in the way instead of pushing into it. Returns a unit direction. */
+function steer(o, gx, gz, mx, mz) {
+  for (const s of solids) {
+    const ox = o.x - s.x, oz = o.z - s.z, od = Math.hypot(ox, oz), reach = s.r + 1.3;
+    if (od > reach || od < 0.001 || mx * ox + mz * oz > 0) continue; // far away, or already walking away from it
+    if (Math.hypot(gx - s.x, gz - s.z) < s.r + 0.6) continue; // the goal is right by it (a bench seat)
+    let tx = -oz / od, tz = ox / od; if (tx * mx + tz * mz < 0) { tx = -tx; tz = -tz; } // go round on the side we're already heading
+    const w = (1.6 * (reach - od)) / 1.3; mx += tx * w; mz += tz * w;
+  }
+  const l = Math.hypot(mx, mz) || 1; return [mx / l, mz / l];
+}
+/** A goal that is nowhere you can stand (in a bench, a lamp, a tree) moves to the nearest spot you can. */
+const reachable = (g) => { bump(g); return g; };
 const freeSeat = (x, z, taken) => seats.filter((s) => !taken.some((o) => Math.hypot(o.x - s.x, o.z - s.z) < 0.5)).sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0];
 const onSeat = (x, z) => seats.find((s) => Math.hypot(s.x - x, s.z - z) < 0.3);
 
@@ -380,10 +394,10 @@ function newBot(id, from) {
 function decide(b, now) {
   const r = Math.random(), people = everyone().filter((p) => p.id !== b.id);
   b.e = ""; b.w = 0;
-  if (r < 0.3) { const a = rnd(0, Math.PI * 2), d = rnd(6, CONFIG.plaza - 2); b.goal = { x: Math.sin(a) * d, z: Math.cos(a) * d }; b.then = pick(["", "", "wave", "jump"]); }
+  if (r < 0.3) { const a = rnd(0, Math.PI * 2), d = rnd(6, CONFIG.plaza - 2); b.goal = reachable({ x: Math.sin(a) * d, z: Math.cos(a) * d }); b.then = pick(["", "", "wave", "jump"]); }
   else if (r < 0.5) { const s = freeSeat(b.x, b.z, [...people, ...[...host.bots.values()].filter((o) => o !== b && o.goal).map((o) => o.goal)]); b.goal = s ? { x: s.x, z: s.z, h: s.h } : null; b.then = "sit"; }
   else if (r < 0.65) { const a = Math.atan2(b.x, b.z) + rnd(-0.6, 0.6); b.goal = { x: Math.sin(a) * 5.8, z: Math.cos(a) * 5.8, h: a + Math.PI }; b.then = "wave"; }
-  else if (r < 0.82 && people.length) { const p = pick(people), a = rnd(0, Math.PI * 2); b.goal = { x: p.x + Math.sin(a) * 2, z: p.z + Math.cos(a) * 2, face: p.id }; b.then = pick(["wave", "dance", "jump"]); }
+  else if (r < 0.82 && people.length) { const p = pick(people), a = rnd(0, Math.PI * 2); b.goal = reachable({ x: p.x + Math.sin(a) * 2, z: p.z + Math.cos(a) * 2, face: p.id }); b.then = pick(["wave", "dance", "jump"]); }
   else { b.goal = null; b.then = ""; b.e = pick(["dance", "dance", "jump", "wave"]); b.ek++; b.until = now + rnd(3000, 6000); }
 }
 function botLine(b, text, emote) { b.say = { t: text, k: b.say.k + 1 }; if (emote) { b.e = emote; b.ek++; } bubble(b.id, b.name, b.color, text); }
@@ -395,14 +409,20 @@ function hostTick(dt, now) {
   const bots = [...host.bots.values()];
   for (const id of humans) { // a bot says hi to everyone who arrives
     const look = id === net.sessionId ? myLook : lookOf(id);
-    if (look.n && !host.greeted.has(id) && bots.length) { host.greeted.add(id); host.queue.push({ at: now + 1500, id: pick(bots).id, text: pick(CONFIG.greet).replace("{name}", look.n), emote: "wave" }); }
+    if (look.n && look.in && !host.greeted.has(id) && bots.length) { host.greeted.add(id); host.queue.push({ at: now + 1500, id: pick(bots).id, text: pick(CONFIG.greet).replace("{name}", look.n), emote: "wave" }); }
   }
   for (const q of host.queue.filter((q) => now >= q.at)) { const b = host.bots.get(q.id); if (b) botLine(b, q.text, q.emote); }
   host.queue = host.queue.filter((q) => now < q.at);
+  const crowd = everyone();
   for (const b of bots) {
     if (b.goal) {
       const dx = b.goal.x - b.x, dz = b.goal.z - b.z, d = Math.hypot(dx, dz), step = CONFIG.speed * 0.75 * dt;
-      if (d > 0.35) { b.x += (dx / d) * step; b.z += (dz / d) * step; b.h += Math.atan2(Math.sin(Math.atan2(dx, dz) - b.h), Math.cos(Math.atan2(dx, dz) - b.h)) * Math.min(1, dt * 8); b.w = 1; if (d > 1.3 || b.then !== "sit") bump(b); }
+      if (b.goal !== b.going) { b.going = b.goal; b.best = d; b.bestAt = now; } // a new goal: watch that it gets closer
+      if (d > 0.35) {
+        const [mx, mz] = steer(b, b.goal.x, b.goal.z, dx / d, dz / d);
+        b.x += mx * step; b.z += mz * step; b.h += Math.atan2(Math.sin(Math.atan2(mx, mz) - b.h), Math.cos(Math.atan2(mx, mz) - b.h)) * Math.min(1, dt * 8); b.w = 1; if (d > 1.3 || b.then !== "sit") bump(b);
+        if (d < b.best - 0.3) { b.best = d; b.bestAt = now; } else if (now - b.bestAt > 3000) { b.goal = null; b.w = 0; b.until = now + rnd(500, 1500); continue; } // blocked: pick something else
+      }
       else {
         const face = b.goal.face && everyone().find((p) => p.id === b.goal.face);
         b.h = face ? Math.atan2(face.x - b.x, face.z - b.z) : b.goal.h ?? b.h;
@@ -411,6 +431,11 @@ function hostTick(dt, now) {
       }
       if (b.goal && performance.now() > b.until + 15000) b.goal = null; // stuck: give up
     } else if (now > b.until) { b.until = now + 4000; decide(b, now); }
+    if (b.e !== "sit" && !(b.goal && b.then === "sit" && Math.hypot(b.goal.x - b.x, b.goal.z - b.z) < 1.3)) for (const o of crowd) { // don't stand inside someone
+      if (o.id === b.id) continue;
+      const ox = b.x - o.x, oz = b.z - o.z, od = Math.hypot(ox, oz);
+      if (od < 0.85 && od > 0.001) { b.x += (ox / od) * (0.85 - od) * 0.5; b.z += (oz / od) * (0.85 - od) * 0.5; }
+    }
     if (now > b.nextSay) { b.nextSay = now + rnd(...CONFIG.botTalk); if (!host.deck.length) host.deck = [...CONFIG.botLines].sort(() => Math.random() - 0.5); botLine(b, host.deck.pop()); } // each line once before any repeats
   }
   if (now - host.lastPub > 120) { // ~8/s, one message for every bot
@@ -440,7 +465,13 @@ function myTick(dt, now) {
     if (f || r) { me.target = null; mx = -Math.sin(cam.yaw) * f + Math.cos(cam.yaw) * r; mz = -Math.cos(cam.yaw) * f - Math.sin(cam.yaw) * r; }
   }
   if (ATTRACT) autopilot(now);
-  if (me.target) { const dx = me.target.x - me.x, dz = me.target.z - me.z, d = Math.hypot(dx, dz); if (d < 0.3) me.target = null; else { mx = dx / d; mz = dz / d; } }
+  if (me.target) {
+    const dx = me.target.x - me.x, dz = me.target.z - me.z, d = Math.hypot(dx, dz);
+    if (me.target !== me.going) { me.going = me.target; me.best = d; me.bestAt = now; }
+    if (d < me.best - 0.3) { me.best = d; me.bestAt = now; }
+    if (d < 0.3 || now - me.bestAt > 2500) me.target = null; // there, or blocked
+    else [mx, mz] = steer(me, me.target.x, me.target.z, dx / d, dz / d);
+  }
   const len = Math.hypot(mx, mz);
   me.w = len > 0 ? 1 : 0;
   if (len > 0) {
@@ -461,12 +492,13 @@ function autopilot(now) {
   if (now < auto.at) return;
   auto.at = now + rnd(2500, 4500);
   const a = rnd(0, Math.PI * 2), d = rnd(7, 15);
-  if (Math.random() < 0.6) me.target = { x: Math.sin(a) * d, z: Math.cos(a) * d }; else emote(pick(["dance", "wave", "jump"]));
+  if (Math.random() < 0.6) me.target = reachable({ x: Math.sin(a) * d, z: Math.cos(a) * d }); else emote(pick(["dance", "wave", "jump"]));
 }
 function sendChat() {
   const input = $("say"), text = input.value.trim().slice(0, 80), now = performance.now();
+  if (text && now - me.lastSay < CONFIG.chatGapMs) return; // too fast: the line stays in the box
   input.value = ""; input.blur();
-  if (!text || now - me.lastSay < CONFIG.chatGapMs) return;
+  if (!text) return;
   me.lastSay = now; me.sayK++;
   net.send("chat", { t: text, k: me.sayK });
   net.me.set("say", JSON.stringify({ t: text, k: me.sayK }));
@@ -533,7 +565,8 @@ function openLook() {
   $("lookPanel").hidden = false;
 }
 $("lookBtn").onclick = openLook;
-$("lookGo").onclick = () => { myLook.n = $("nameIn").value.trim().slice(0, 16) || myLook.n; saveLook(); $("lookPanel").hidden = true; };
+$("nameIn").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("nameIn").blur(); $("lookGo").click(); } });
+$("lookGo").onclick = () => { myLook.n = $("nameIn").value.trim().slice(0, 16) || myLook.n; myLook.in = 1; saveLook(); $("lookPanel").hidden = true; };
 
 // ── INPUT ───────────────────────────────────────────────────────────────────────────
 const wheel = $("wheel").firstElementChild;
@@ -544,22 +577,23 @@ Object.entries(EMOTES).forEach(([e, icon], i) => {
 });
 $("wheel").onclick = () => { $("wheel").hidden = true; };
 $("emoteBtn").onclick = () => { $("wheel").hidden = !$("wheel").hidden; };
-$("say").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendChat(); } if (e.key === "Escape") $("say").blur(); e.stopPropagation(); });
+$("say").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendChat(); } if (e.key === "Escape") $("say").blur(); e.stopPropagation(); });
 addEventListener("keydown", (e) => {
   if (typing()) return;
   const k = e.key.toLowerCase();
-  if (k === "enter") { e.preventDefault(); $("say").focus(); return; }
+  if (k === "enter") { e.preventDefault(); if ($("lookPanel").hidden && $("peoplePanel").hidden) $("say").focus(); return; }
   if ("1234".includes(k) && k.length === 1) emote(Object.keys(EMOTES)[+k - 1]);
   if (k === "e" || k === "q") $("wheel").hidden = !$("wheel").hidden;
   keys.add(k);
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
-addEventListener("blur", () => keys.clear());
+addEventListener("blur", () => { keys.clear(); drag.id = -1; });
 // Drag to look around; a tap (no drag) on the ground walks there.
 const cv = renderer.domElement, drag = { id: -1, x: 0, y: 0, moved: 0 }, ray = new THREE.Raycaster(), ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
-cv.addEventListener("pointerdown", (e) => { e.preventDefault(); $("say").blur(); if (drag.id < 0) Object.assign(drag, { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 }); });
+cv.addEventListener("pointerdown", (e) => { e.preventDefault(); $("say").blur(); if (drag.id < 0) { Object.assign(drag, { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 }); try { cv.setPointerCapture(e.pointerId); } catch {} } });
 cv.addEventListener("pointermove", (e) => {
   if (e.pointerId !== drag.id) return;
+  if (e.pointerType === "mouse" && !e.buttons) { drag.id = -1; return; } // the button came up where we didn't hear it
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY; drag.moved += Math.abs(dx) + Math.abs(dy);
   cam.yaw -= dx * 0.008; cam.pitch = Math.max(0.12, Math.min(1.1, cam.pitch + dy * 0.005));
 });
@@ -568,9 +602,10 @@ for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => 
   drag.id = -1;
   if (ev === "pointerup" && drag.moved < 10) {
     ray.setFromCamera({ x: (e.clientX / innerWidth) * 2 - 1, y: -(e.clientY / innerHeight) * 2 + 1 }, camera);
-    if (ray.ray.intersectPlane(ground, hit)) me.target = { x: hit.x, z: hit.z };
+    if (ray.ray.intersectPlane(ground, hit)) me.target = reachable({ x: hit.x, z: hit.z });
   }
 });
+cv.addEventListener("contextmenu", (e) => e.preventDefault());
 cv.addEventListener("wheel", (e) => { CONFIG.camDist = Math.max(5, Math.min(18, CONFIG.camDist + e.deltaY * 0.01)); }, { passive: true });
 document.addEventListener("touchmove", (e) => { if (e.target === cv) e.preventDefault(); }, { passive: false });
 
@@ -604,12 +639,34 @@ function frame(now) {
   // Camera: behind you, orbiting with drags. ?attract circles the plaza slowly.
   if (ATTRACT) { const a = t * 0.1; camera.position.set(Math.sin(a) * 15.5, 7, Math.cos(a) * 15.5); camera.lookAt(0, 0.8, 0); }
   else {
-    const d = CONFIG.camDist * (camera.aspect < 1 ? 1.35 : 1), want = new THREE.Vector3(me.x + Math.sin(cam.yaw) * Math.cos(cam.pitch) * d, 1.4 + Math.sin(cam.pitch) * d, me.z + Math.cos(cam.yaw) * Math.cos(cam.pitch) * d);
-    camera.position.lerp(want, 1 - Math.pow(0.0005, dt)); camera.lookAt(me.x, 1.4, me.z);
+    const d = CONFIG.camDist * (camera.aspect < 1 ? 1.35 : 1), want = clearCamera(d);
+    camera.position.lerp(want, 1 - Math.pow(want.moved ? 1e-5 : 0.0005, dt)); camera.lookAt(me.x, 1.4, me.z);
   }
   renderer.render(scene, camera);
   for (const [id, v] of views) placeTag(v, id, now);
   if (now - lastHud > 250) { lastHud = now; hud(now); fixColor(); }
+}
+/** Where the camera goes: behind you at distance d. When leaves (or the fountain top) are in the way it
+ *  looks from higher up, and only if that fails comes closer, so it never sits inside a tree. */
+const camWant = new THREE.Vector3();
+function clearCamera(d) {
+  const spot = (pitch, dist) => camWant.set(me.x + Math.sin(cam.yaw) * Math.cos(pitch) * dist, 1.4 + Math.sin(pitch) * dist, me.z + Math.cos(cam.yaw) * Math.cos(pitch) * dist);
+  camWant.moved = false;
+  if (clearFor(spot(cam.pitch, d)) >= 1) return camWant;
+  camWant.moved = true;
+  for (let p = cam.pitch + 0.1; p < 1.3; p += 0.1) if (clearFor(spot(p, d)) >= 1) return camWant;
+  const k = clearFor(spot(cam.pitch, d)); return spot(cam.pitch, Math.max(3, d * k - 0.3));
+}
+/** How much of the line from your head to w is clear of leaves, 0 to 1. */
+function clearFor(w) {
+  const hx = me.x, hy = 1.4, hz = me.z, dx = w.x - hx, dy = w.y - hy, dz = w.z - hz, len = Math.hypot(dx, dy, dz);
+  let reach = len;
+  for (const c of canopies) { // where the line first enters the sphere
+    const ox = hx - c.x, oy = hy - c.y, oz = hz - c.z, b = (ox * dx + oy * dy + oz * dz) / len, cc = ox * ox + oy * oy + oz * oz - c.r * c.r, disc = b * b - cc;
+    if (disc < 0 || cc < 0) continue; // misses it, or you are standing under it
+    const t = -b - Math.sqrt(disc); if (t > 0 && t < reach) reach = t;
+  }
+  return reach / len;
 }
 function show(v, x, z, h, e, ek, dt, t, look) {
   setLook(v, look);
@@ -645,6 +702,7 @@ function hud(now) {
   myLook.c = COLORS.find((c) => !taken.has(c)) || pick(COLORS);
   myLook.j = Date.now(); // when you joined: settles who changes color if two players match
   const a = rnd(-0.5, 0.5); me.x = Math.sin(a) * 15; me.z = Math.cos(a) * 15; me.h = a + Math.PI; cam.yaw = a;
+  if (ATTRACT || stored("plaza.look")) myLook.in = 1; // already in the plaza; a first visit picks a name first (bots greet you by it)
   net.me.set({ look: JSON.stringify(myLook), hb: Date.now() }); joinedAt = performance.now();
   if (ATTRACT) { $("bar").hidden = true; $("log").hidden = true; } else if (!stored("plaza.look")) openLook();
   camera.position.set(me.x, 6, me.z + 9);
