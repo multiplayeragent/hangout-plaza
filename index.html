@@ -288,6 +288,8 @@ function steer(o, gx, gz, mx, mz) {
 const reachable = (g) => { bump(g); return g; };
 const freeSeat = (x, z, taken) => seats.filter((s) => !taken.some((o) => Math.hypot(o.x - s.x, o.z - s.z) < 0.5)).sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0];
 const onSeat = (x, z) => seats.find((s) => Math.hypot(s.x - x, s.z - z) < 0.3);
+/** Getting up from a bench: step out in front of it first, so nobody dances or waves inside the bench. */
+function standUp(o) { if (!onSeat(o.x, o.z)) return; o.x += Math.sin(o.h) * 1.2; o.z += Math.cos(o.h) * 1.2; bump(o); }
 
 // ── AVATARS ─────────────────────────────────────────────────────────────────────────
 const skin = mat("#ffe0c2"), black = mat("#1d2433"), blush = mat("#ff9fb0"), shoe = mat("#3a3f4f");
@@ -393,6 +395,7 @@ function newBot(id, from) {
 /** What a bot does next: wander, sit on a bench, admire the fountain, visit someone, or dance. */
 function decide(b, now) {
   const r = Math.random(), people = everyone().filter((p) => p.id !== b.id);
+  if (b.e === "sit") standUp(b);
   b.e = ""; b.w = 0;
   if (r < 0.3) { const a = rnd(0, Math.PI * 2), d = rnd(6, CONFIG.plaza - 2); b.goal = reachable({ x: Math.sin(a) * d, z: Math.cos(a) * d }); b.then = pick(["", "", "wave", "jump"]); }
   else if (r < 0.5) { const s = freeSeat(b.x, b.z, [...people, ...[...host.bots.values()].filter((o) => o !== b && o.goal).map((o) => o.goal)]); b.goal = s ? { x: s.x, z: s.z, h: s.h } : null; b.then = "sit"; }
@@ -409,7 +412,7 @@ function hostTick(dt, now) {
   const bots = [...host.bots.values()];
   for (const id of humans) { // a bot says hi to everyone who arrives
     const look = id === net.sessionId ? myLook : lookOf(id);
-    if (look.n && look.in && !host.greeted.has(id) && bots.length) { host.greeted.add(id); host.queue.push({ at: now + 1500, id: pick(bots).id, text: pick(CONFIG.greet).replace("{name}", look.n), emote: "wave" }); }
+    if (look.n && look.in && !host.greeted.has(id) && bots.length) { host.greeted.add(id); host.queue.push({ at: now + 1500, id: pick(bots).id, text: pick(CONFIG.greet).replace("{name}", String(look.n).slice(0, 16)), emote: "wave" }); }
   }
   for (const q of host.queue.filter((q) => now >= q.at)) { const b = host.bots.get(q.id); if (b) botLine(b, q.text, q.emote); }
   host.queue = host.queue.filter((q) => now < q.at);
@@ -426,6 +429,7 @@ function hostTick(dt, now) {
       else {
         const face = b.goal.face && everyone().find((p) => p.id === b.goal.face);
         b.h = face ? Math.atan2(face.x - b.x, face.z - b.z) : b.goal.h ?? b.h;
+        if (b.then === "sit" && crowd.some((p) => p.id !== b.id && Math.hypot(p.x - b.goal.x, p.z - b.goal.z) < 0.5)) { b.goal = null; b.w = 0; b.until = now + rnd(500, 1500); continue; } // someone sat there first
         if (b.then === "sit") { b.x = b.goal.x; b.z = b.goal.z; }
         b.goal = null; b.w = 0; b.e = b.then; b.ek++; b.until = now + (b.then === "sit" ? rnd(6000, 12000) : rnd(2500, 5000));
       }
@@ -445,7 +449,8 @@ function hostTick(dt, now) {
 }
 /** Bots answer when someone says hi. */
 function maybeReply(name, text) {
-  if (!isHost() || !/\b(hi|hey|hello|yo|hiya|howdy)\b/i.test(text) || !host.bots.size) return;
+  if (!isHost() || !/\b(hi|hey|hello|yo|hiya|howdy)\b/i.test(text) || !host.bots.size || host.queue.length >= 3) return; // a flood of "hi" gets a few answers, not hundreds
+  name = String(name).slice(0, 16); // names are 16 characters: a longer one would overflow the shared bots field
   host.queue.push({ at: performance.now() + rnd(900, 1800), id: pick([...host.bots.keys()]), text: pick(["Hey {name}! 😄", "Hi {name}!", "Hello {name} 👋"]).replace("{name}", name), emote: "wave" });
 }
 
@@ -483,6 +488,7 @@ function myTick(dt, now) {
   if ((a !== me.sent && now - me.lastSend > 100) || now - me.lastSend > 2000) { me.lastSend = now; me.sent = a; net.me.set("a", a); }
 }
 function emote(e) {
+  if (me.e === "sit" && e !== "sit") standUp(me);
   if (e === "sit") { const s = freeSeat(me.x, me.z, everyone().filter((p) => p.id !== net.sessionId)); if (s && Math.hypot(s.x - me.x, s.z - me.z) < 2.2) { me.x = s.x; me.z = s.z; me.h = s.h; } }
   me.e = e; me.ek++; me.target = null; $("wheel").hidden = true;
 }
@@ -542,7 +548,7 @@ function everyone() {
   for (const id of Object.keys(S.entities.players || {})) {
     if (id === net.sessionId) { out.push({ id, name: myLook.n, color: myLook.c, x: me.x, z: me.z, mine: true }); continue; }
     const a = field("a:" + id, S.entities.players[id].a, null), look = lookOf(id);
-    if (a && live.has(id)) out.push({ id, name: look.n || "Player", color: look.c || "#ccc", x: a.x, z: a.z });
+    if (a && live.has(id)) out.push({ id, name: String(look.n || "Player").slice(0, 16), color: look.c || "#ccc", x: a.x, z: a.z });
   }
   for (const b of botList()) out.push({ id: b.i, name: b.n, color: b.c, x: b.x, z: b.z, bot: true });
   return out;
@@ -625,8 +631,8 @@ function frame(now) {
     if (id === net.sessionId || !live.has(id)) continue;
     const a = field("a:" + id, p.a, null); if (!a) continue;
     const say = field("say:" + id, p.say, null), look = lookOf(id);
-    if (say && say.k > (heard.get(id) || 0)) { heard.set(id, say.k); bubble(id, look.n || "Player", look.c || "#ccc", String(say.t)); }
-    seen.add(id); show(viewOf(id), a.x, a.z, a.ry, a.e, a.ek, dt, t, { n: String(look.n ?? "Player"), c: look.c, hat: look.hat });
+    if (say && say.k > (heard.get(id) || 0)) { heard.set(id, say.k); bubble(id, String(look.n || "Player").slice(0, 16), look.c || "#ccc", String(say.t).slice(0, 80)); }
+    seen.add(id); show(viewOf(id), a.x, a.z, a.ry, a.e, a.ek, dt, t, { n: String(look.n ?? "Player").slice(0, 16), c: look.c, hat: look.hat });
   }
   for (const b of botList()) {
     if (b.sk > (heard.get(b.i) || 0)) { const first = !heard.has(b.i); heard.set(b.i, b.sk); if (!isHost() && b.st) bubble(b.i, b.n, b.c, b.st, !first); } // the host showed it already; old bot chatter skips the log
@@ -693,7 +699,7 @@ function hud(now) {
   net.on("chat", (msg, from) => {
     if (!msg || typeof msg.t !== "string") return;
     const look = lookOf(from), text = msg.t.slice(0, 80);
-    if ((msg.k || 0) > (heard.get(from) || 0)) { heard.set(from, msg.k || 0); bubble(from, look.n || "Player", look.c || "#ccc", text); }
+    if ((msg.k || 0) > (heard.get(from) || 0)) { heard.set(from, msg.k || 0); bubble(from, String(look.n || "Player").slice(0, 16), look.c || "#ccc", text); }
     maybeReply(look.n || "friend", text);
   });
   net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
